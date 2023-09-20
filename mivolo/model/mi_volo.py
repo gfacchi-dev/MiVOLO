@@ -167,8 +167,39 @@ class MiVOLO:
             model_input = faces_input
         output = self.inference(model_input)
 
+        if self.meta.only_age:
+            age_output = output
+            gender_probs, gender_indx = None, None
+        else:
+            age_output = output[:, 2]
+            gender_output = output[:, :2].softmax(-1)
+            gender_probs, gender_indx = gender_output.topk(1)
+        predictions = []
+        
+        for index in range(output.shape[0]):
+            face_ind = faces_inds[index]
+            body_ind = bodies_inds[index]
+
+            # get_age
+            age = age_output[index].item()
+            age = age * (self.meta.max_age - self.meta.min_age) + self.meta.avg_age
+            age = round(age, 2)
+
+            detected_bboxes.set_age(face_ind, age)
+            detected_bboxes.set_age(body_ind, age)
+
+            if gender_probs is not None:
+                gender = "male" if gender_indx[index].item() == 0 else "female"
+                gender_score = gender_probs[index].item()
+
+                detected_bboxes.set_gender(face_ind, gender, gender_score)
+                detected_bboxes.set_gender(body_ind, gender, gender_score)
+
+                predictions.append({"gender": (gender, gender_score), "age": age})
+
         # write gender and age results into detected_bboxes
         self.fill_in_results(output, detected_bboxes, faces_inds, bodies_inds)
+        return predictions
 
     def fill_in_results(self, output, detected_bboxes, faces_inds, bodies_inds):
         if self.meta.only_age:
@@ -180,7 +211,7 @@ class MiVOLO:
             gender_probs, gender_indx = gender_output.topk(1)
 
         assert output.shape[0] == len(faces_inds) == len(bodies_inds)
-
+        
         # per face
         for index in range(output.shape[0]):
             face_ind = faces_inds[index]

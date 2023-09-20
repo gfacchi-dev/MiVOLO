@@ -46,6 +46,8 @@ def get_parser():
     parser.add_argument("--output", type=str, default=None, required=True, help="folder for output results")
     parser.add_argument("--detector-weights", type=str, default=None, required=True, help="Detector weights (YOLOv8).")
     parser.add_argument("--checkpoint", default="", type=str, required=True, help="path to mivolo checkpoint")
+    parser.add_argument("--allow-more-faces", default=True, help="If set script will raise an exception on images containing more than one face.")
+    parser.add_argument("--test-dataset", default=True, help="If set script will predict from GT of a predefined dataset with a specific structure.")
 
     parser.add_argument(
         "--with-persons", action="store_true", default=False, help="If set model will run with persons, if available"
@@ -99,18 +101,35 @@ def main():
 
     elif input_type == InputType.Image:
         image_files = get_all_files(args.input) if os.path.isdir(args.input) else [args.input]
-
+        
+        results = []
         for img_p in image_files:
-
             img = cv2.imread(img_p)
-            detected_objects, out_im = predictor.recognize(img)
-
+            detected_objects, out_im, predictions = predictor.recognize(img)
+            
+            if not args.allow_more_faces:
+                if len(predictions) > 1:
+                    raise RuntimeError(f"More than one face detected on image: {img_p}")
+            if args.test_dataset:
+                result = predictions[0]
+                ground_truth = 'male' if img_p.split(os.sep)[-3][0] == 'M' else 'female'
+                result['gt'] = ground_truth
+                result['exact_guess'] = 1.0 if predictions[0]['gt'] == predictions[0]['gender'][0] else 0.0
+                results.append(result)
+            
             if args.draw:
                 bname = os.path.splitext(os.path.basename(img_p))[0]
                 filename = os.path.join(args.output, f"out_{bname}.jpg")
                 cv2.imwrite(filename, out_im)
                 _logger.info(f"Saved result to {filename}")
-
+    
+        if args.test_dataset:
+            total_guesses = int(sum([result['exact_guess'] for result in results]))
+            total_faces = len(results)
+            print(len(image_files))
+            print("---- RESULTS ----")
+            print(f"Total correct guesses: {total_guesses}/{total_faces}")
+            print(f"Accuracy: {total_guesses / total_faces * 100:.2f}%")
 
 if __name__ == "__main__":
     main()
